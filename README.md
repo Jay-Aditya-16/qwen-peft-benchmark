@@ -70,6 +70,12 @@ Applies DoRA on top of a quantized NF4 backbone.
 
 ---
 
+## Benchmark Charts
+
+![Validation Loss and Peak VRAM by Method](benchmark_results.png)
+
+---
+
 ## Analysis
 
 ### 1. LoRA Delivered the Best Overall Quality
