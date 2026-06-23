@@ -72,6 +72,8 @@ Applies DoRA on top of a quantized NF4 backbone.
 
 ## Benchmark Charts
 
+![Results Table](results_table.png)
+
 ![Validation Loss and Peak VRAM by Method](benchmark_results.png)
 
 ---
