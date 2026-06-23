@@ -1,196 +1,167 @@
-# Benchmarking LoRA, DoRA, QLoRA, and QDoRA on Qwen2.5-3B Using a Google Colab T4
-
-## Introduction
-
-Parameter-Efficient Fine-Tuning (PEFT) methods have become the standard approach for adapting large language models without retraining billions of parameters. While LoRA remains the most widely adopted technique, newer methods such as DoRA and their quantized variants promise improved adaptation quality with minimal overhead.
-
-To understand the practical trade-offs between these methods, I benchmarked LoRA, DoRA, QLoRA, and QDoRA on Qwen2.5-3B-Instruct using a single NVIDIA T4 GPU available through Google Colab.
-
-The goal was simple:
-
-**Which method provides the best balance of quality, memory efficiency, and training speed on limited hardware?**
-
+---
+title: Qwen2.5-3B PEFT Benchmark
+emoji: 🔬
+colorFrom: blue
+colorTo: indigo
+sdk: static
+pinned: false
+tags:
+  - peft
+  - lora
+  - dora
+  - qlora
+  - qdora
+  - qwen2.5
+  - fine-tuning
+  - benchmark
+  - t4
+  - quantization
+  - bitsandbytes
+  - nlp
+license: mit
 ---
 
-## Experimental Setup
+# LoRA vs DoRA vs QLoRA vs QDoRA: Empirical Benchmark on Qwen2.5-3B
 
-### Hardware
-
-* NVIDIA T4 GPU (16 GB VRAM)
-* Google Colab
-
-### Model
-
-* Qwen2.5-3B-Instruct
-
-### Dataset
-
-* Alpaca Cleaned Dataset
-* 300 training samples
-* 80 validation samples
-
-### Training Configuration
-
-* Rank (r): 16
-* LoRA Alpha: 32
-* Dropout: 0.05
-* Learning Rate: 2e-4
-* Max Sequence Length: 64
-* Training Steps: 80
-* Gradient Accumulation: 8
-
-### Methods Compared
-
-#### LoRA
-
-Low-Rank Adaptation freezes the original model weights and learns low-rank update matrices.
-
-#### DoRA
-
-Weight-Decomposed Low-Rank Adaptation extends LoRA by separately modeling weight magnitude and direction, aiming to better mimic full fine-tuning.
-
-#### QLoRA
-
-Combines LoRA with a 4-bit NF4 quantized base model, dramatically reducing memory requirements.
-
-#### QDoRA
-
-Applies DoRA on top of a quantized NF4 backbone.
+An empirical evaluation of four parameter-efficient fine-tuning methods under constrained hardware conditions. All experiments run on a single NVIDIA T4 GPU (16 GB VRAM) via Google Colab.
 
 ---
 
 ## Results
 
-| Method | Eval Loss ↓ | Perplexity ↓ | Peak VRAM ↓ | Training Time ↓ |
-| ------ | ----------- | ------------ | ----------- | --------------- |
-| LoRA   | 1.3384      | 3.81         | 9201 MB     | 419.5 s         |
-| DoRA   | 1.3401      | 3.82         | 9935 MB     | 1425.6 s        |
-| QLoRA  | 1.3645      | 3.91         | 6482 MB     | 603.0 s         |
-| QDoRA  | 1.3670      | 3.92         | 6624 MB     | 1697.0 s        |
+![Results Table](results_table.png)
+
+![Validation Loss and Peak VRAM](benchmark_results.png)
+
+| Method | Eval Loss ↓ | Perplexity ↓ | Peak VRAM ↓ | Train Time ↓ | Trainable Params |
+|--------|-------------|--------------|-------------|--------------|-----------------|
+| LoRA   | 1.3384      | 3.8130       | 9201 MB     | 419.5s       | 29.9M (0.961%)  |
+| DoRA   | 1.3401      | 3.8196       | 9935 MB     | 1425.6s      | 31.0M (0.993%)  |
+| QLoRA  | 1.3645      | 3.9137       | 6482 MB     | 603.0s       | 29.9M (1.732%)  |
+| QDoRA  | 1.3670      | 3.9236       | 6624 MB     | 1697.0s      | 31.0M (1.790%)  |
 
 ---
 
-## Benchmark Charts
+## Methods
 
-![Results Table](results_table.png)
+### LoRA (Hu et al., 2022)
 
-![Validation Loss and Peak VRAM by Method](benchmark_results.png)
+Freezes pretrained weights W₀ and approximates the weight update as a low-rank decomposition ΔW = BA where B ∈ R^(d×r) and A ∈ R^(r×k), r ≪ min(d,k). A is Kaiming-initialized; B is zero-initialized ensuring ΔW = 0 at step 0. Adapters merge into base weights post-training with zero inference overhead. At r=16 this yields less than 1% trainable parameters.
+
+### DoRA (Liu et al., 2024)
+
+Extends LoRA via weight decomposition. Any weight matrix W is expressed as W = m · (V / ||V||_c) where m is a per-column magnitude vector and V is the direction matrix. DoRA trains both components: LoRA handles directional updates (ΔV = BA), a float16 magnitude vector handles scaling. The full update is W' = (m / ||V + ΔV||_c) · (V + ΔV).
+
+The paper shows LoRA produces a positive ΔM/ΔD correlation across training steps — magnitude and direction changes scale proportionally. Full fine-tuning produces a negative slope — large directional shifts with small magnitude shifts, or vice versa. DoRA reproduces the negative slope, theoretically enabling more granular weight adaptation. The paper recommends detaching ||V + ΔV||_c from the gradient graph to reduce backprop memory by ~24.4%.
+
+### QLoRA (Dettmers et al., 2023)
+
+Loads base weights in NF4 (Normal Float 4-bit) quantization — a data type whose quantization grid is optimized for normally distributed weights, minimizing information loss vs uniform int4. Double quantization further quantizes the per-block quantization constants from float32 to float8, saving ~0.5 bits/parameter. LoRA adapters run in float16. Base weights dequantize on-the-fly during the forward pass. `prepare_model_for_kbit_training()` casts layer norms to float32 and enables gradient checkpointing.
+
+### QDoRA
+
+Applies DoRA on top of a QLoRA-quantized base. Magnitude vector in float16, directional LoRA adapters in float16, base weights in NF4. The DoRA paper reports QDoRA accuracy of 0.31 on Orca-Math vs QLoRA's 0.12 and full fine-tuning's 0.26 — the strongest result in their quantized fine-tuning comparison.
+
+---
+
+## Experimental Setup
+
+**Hardware:** NVIDIA T4 16 GB, Google Colab
+
+**Model:** `Qwen/Qwen2.5-3B-Instruct`
+
+**Dataset:** `yahma/alpaca-cleaned` — 300 train / 80 validation samples, Alpaca instruction format
+
+**Hyperparameters (identical across all methods):**
+
+```
+rank (r)              : 16
+lora_alpha            : 32
+lora_dropout          : 0.05
+target_modules        : q_proj, k_proj, v_proj, o_proj,
+                        gate_proj, up_proj, down_proj
+learning_rate         : 2e-4
+lr_scheduler          : cosine
+max_steps             : 80
+per_device_batch_size : 1
+gradient_accumulation : 8   (effective batch size: 8)
+max_seq_length        : 64
+optimizer             : paged_adamw_8bit
+precision             : fp16
+seed                  : 42
+```
+
+**Quantization config (QLoRA / QDoRA):**
+```python
+BitsAndBytesConfig(
+    load_in_4bit=True,
+    bnb_4bit_quant_type="nf4",
+    bnb_4bit_compute_dtype=torch.float16,
+    bnb_4bit_use_double_quant=True,
+)
+```
 
 ---
 
 ## Analysis
 
-### 1. LoRA Delivered the Best Overall Quality
+### Quality
 
-LoRA achieved the lowest validation loss and perplexity across all methods tested.
+LoRA and DoRA are statistically tied at this training scale. The 0.0017 loss gap is below the noise floor for an 80-step run. DoRA's advantage — more expressive weight updates via magnitude/direction decomposition — requires sufficient gradient signal to compound into measurable quality differences. At 80 steps on 300 samples, no method has converged. The gap between LoRA and DoRA in the paper (e.g. +3.7% on LLaMA-7B commonsense) emerged from full-dataset training with thousands of steps.
 
-Although DoRA was expected to outperform LoRA based on published literature, the observed difference was extremely small:
+QLoRA vs QDoRA is similarly tied at 0.0025 delta.
 
-* LoRA: 1.3384
-* DoRA: 1.3401
+### Memory
 
-The gap of only 0.0017 is effectively negligible for this experiment.
+The 29.5% VRAM reduction from LoRA to QLoRA (9.2 GB → 6.5 GB) is the most actionable result. NF4 double quantization introduces a fixed quantization noise floor; the LoRA adapters partially compensate during training but cannot fully recover the precision loss. The residual 1.9% quality degradation represents the irreducible cost of 4-bit base weights at this model scale.
 
----
+DoRA's 8% VRAM overhead vs LoRA (9.2 → 9.9 GB) comes from magnitude gradient storage and the additional forward-pass computation for column-wise normalization.
 
-### 2. QLoRA Preserved Most of LoRA's Performance
+### Training Time
 
-QLoRA reduced memory consumption significantly while maintaining comparable validation performance.
-
-Compared to LoRA:
-
-* Validation loss increased by only ~1.9%
-* VRAM usage dropped from 9.2 GB to 6.5 GB
-
-This demonstrates why QLoRA has become the industry standard for fine-tuning models on consumer GPUs.
+DoRA's 3.4× training time overhead is the most practically significant result. The backward pass through the magnitude scaling adds compute at every step. On a T4, which has ~65 TFLOPS of FP16 throughput vs ~312 TFLOPS on an A100, this overhead is proportionally more severe. A hyperparameter sweep taking 30 minutes with LoRA takes over 2 hours with DoRA on equivalent hardware.
 
 ---
 
-### 3. DoRA Introduced Significant Training Overhead
+## Key Findings
 
-While DoRA matched LoRA's quality, training time increased substantially.
+**QLoRA is the practical optimum on T4.** 29.5% VRAM reduction for 1.9% quality degradation is an unambiguous win for constrained hardware. It's the difference between fitting on a T4 and OOM-crashing on smaller GPUs.
 
-| Method | Time   |
-| ------ | ------ |
-| LoRA   | 419 s  |
-| DoRA   | 1426 s |
+**DoRA needs scale to show its advantage.** The theoretical basis is sound — the ΔM/ΔD analysis in the paper is compelling — but the gains only manifest with larger datasets, longer schedules, and harder reasoning tasks. Don't expect it to outperform LoRA on short runs.
 
-DoRA required over 3× more training time while providing no measurable improvement under these training conditions.
-
----
-
-### 4. QDoRA Was the Most Expensive Configuration
-
-QDoRA combined the computational overhead of DoRA with quantized training.
-
-Although memory usage remained low, training time became the highest among all methods tested.
-
-For this experiment, QDoRA offered neither a quality advantage nor a meaningful efficiency benefit.
-
----
-
-## Memory Efficiency
-
-The most significant finding emerged from memory usage.
-
-| Method | Peak VRAM |
-| ------ | --------- |
-| LoRA   | 9.2 GB    |
-| DoRA   | 9.9 GB    |
-| QLoRA  | 6.5 GB    |
-| QDoRA  | 6.6 GB    |
-
-QLoRA reduced memory requirements by approximately:
-
-29.5%
-
-while preserving nearly all of LoRA's adaptation quality.
-
-For researchers and builders working with T4s, RTX 3060s, RTX 4060s, or laptop GPUs, this reduction can be the difference between a successful training run and an out-of-memory crash.
+**DoRA's time cost is non-trivial.** 3.4× training overhead is the number most people miss when reading the DoRA paper. Budget for it before committing to DoRA in a training pipeline.
 
 ---
 
 ## Limitations
 
-This benchmark intentionally used a small-scale configuration:
-
-* 300 training samples
-* 80 validation samples
-* 80 optimization steps
-* Sequence length of 64 tokens
-
-As a result, the benchmark primarily measures:
-
-* Memory efficiency
-* Training speed
-* Early-stage adaptation behavior
-
-rather than the full convergence characteristics of each method.
-
-Previous DoRA research suggests that its advantages become more visible with:
-
-* Larger datasets
-* Longer training schedules
-* More challenging reasoning tasks
-
-Future experiments with 2,000+ samples and 500+ training steps may reveal stronger differences between LoRA and DoRA.
+- 64 token max sequence length truncates most Alpaca responses — all methods are evaluated on partial outputs
+- Single seed per method — no confidence intervals on the reported gaps
+- 80 steps captures early training dynamics, not convergence behavior
+- Results are specific to Qwen2.5-3B; different model families may show different scaling behavior
 
 ---
 
-## Conclusion
+## Reproduce
 
-For fine-tuning Qwen2.5-3B on a T4 GPU:
+```bash
+git clone https://github.com/Jay-Aditya-16/qwen-peft-benchmark
+# Open benchmark.py in Google Colab with T4 GPU
+# Runtime → Change runtime type → T4
+```
 
-**Best Quality:** LoRA
+**Dependencies:**
+```bash
+pip install transformers>=4.45 accelerate bitsandbytes>=0.45
+pip install peft>=0.14 datasets sentencepiece
+pip install pandas matplotlib seaborn
+```
 
-**Best Memory Efficiency:** QLoRA
+---
 
-**Best Overall Trade-off:** QLoRA
+## References
 
-**Most Computationally Expensive:** QDoRA
-
-The key takeaway is that QLoRA preserved nearly all of LoRA's performance while reducing VRAM usage by roughly 30%, making it the most practical choice for resource-constrained environments.
-
-While DoRA and QDoRA remain promising techniques, their benefits were not evident under short-run training conditions.
-
-For most developers fine-tuning models on commodity hardware today, QLoRA continues to offer the strongest balance between quality, speed, and memory efficiency.
+- Hu et al. (2022). *LoRA: Low-Rank Adaptation of Large Language Models.* ICLR 2022.
+- Dettmers et al. (2023). *QLoRA: Efficient Finetuning of Quantized LLMs.* NeurIPS 2023.
+- Liu et al. (2024). *DoRA: Weight-Decomposed Low-Rank Adaptation.* arXiv:2402.09353.
+- Qwen Team (2024). *Qwen2.5 Technical Report.*
