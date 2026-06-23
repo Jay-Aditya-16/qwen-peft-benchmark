@@ -1,25 +1,4 @@
----
-title: Qwen2.5-3B PEFT Benchmark
-emoji: 🔬
-colorFrom: blue
-colorTo: indigo
-sdk: static
-pinned: false
-tags:
-  - peft
-  - lora
-  - dora
-  - qlora
-  - qdora
-  - qwen2.5
-  - fine-tuning
-  - benchmark
-  - t4
-  - quantization
-  - bitsandbytes
-  - nlp
-license: mit
----
+
 
 # LoRA vs DoRA vs QLoRA vs QDoRA: Empirical Benchmark on Qwen2.5-3B
 
